@@ -45,6 +45,13 @@ class ProfileCreateSchema(BaseModel):
             raise ValueError("Info field cannot be empty or contain only spaces.")
         return value
 
+    @field_validator("avatar")
+    @classmethod
+    def validate_avatar(cls, value: UploadFile):
+        validate_image(value)
+        value.file.seek(0)
+        return value
+
     @classmethod
     def as_form(
             cls,

@@ -101,7 +101,6 @@ async def create_user_profile(
     avatar_key = f"avatars/{user_id}_avatar.jpg"
 
     try:
-        validate_image(data.avatar)
 
         data.avatar.file.seek(0)
         file_bytes = await data.avatar.read()
