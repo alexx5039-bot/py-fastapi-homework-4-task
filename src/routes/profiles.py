@@ -91,30 +91,31 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> UserModel | None:
 )
 async def create_user_profile(
     user_id: int,
-    payload: dict = Depends(get_current_user_payload),
     data: ProfileCreateSchema = Depends(ProfileCreateSchema.as_form),
+    payload: dict = Depends(get_current_user_payload),
     db: AsyncSession = Depends(get_db),
     s3_client: S3StorageInterface = Depends(get_s3_storage_client),
 ):
+    current_user_id = payload.get("user_id")
+
+    avatar_key = f"avatars/{user_id}_avatar.jpg"
 
     try:
-        validate_name(data.first_name)
-        validate_name(data.last_name)
-        validate_gender(data.gender)
-        validate_birth_date(data.date_of_birth)
-
-        if not data.info.strip():
-            raise ValueError("Info field cannot be empty or contain only spaces.")
-
         validate_image(data.avatar)
 
-    except ValueError as e:
-        raise HTTPException(
-            status_code=422,
-            detail=str(e)
-        )
+        data.avatar.file.seek(0)
+        file_bytes = await data.avatar.read()
 
-    current_user_id = payload.get("user_id")
+        await s3_client.upload_file(avatar_key, file_bytes)
+
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    except S3FileUploadError:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to upload avatar. Please try again later."
+        )
 
     current_user = await get_user_by_id(db, current_user_id)
 
@@ -136,23 +137,17 @@ async def create_user_profile(
     result = await db.execute(stmt)
 
     if result.scalar_one_or_none():
-        raise HTTPException(400, "User already has a profile.")
+        raise HTTPException(
+            status_code=400,
+            detail="User already has a profile."
+        )
 
     user = await get_user_by_id(db, user_id)
 
     if not user or not user.is_active:
-        raise HTTPException(401, "User not found or not active.")
-
-    avatar_key = f"avatars/{user_id}_avatar.jpg"
-
-    try:
-        file_bytes = await data.avatar.read()
-        await s3_client.upload_file(avatar_key, file_bytes)
-
-    except S3FileUploadError:
         raise HTTPException(
-            status_code=500,
-            detail="Failed to upload avatar. Please try again later."
+            status_code=401,
+            detail="User not found or not active."
         )
 
     profile = await create_profile(
@@ -165,5 +160,7 @@ async def create_user_profile(
         info=data.info.strip(),
         avatar_url=avatar_key,
     )
+
+    profile.avatar = await s3_client.get_file_url(profile.avatar)
 
     return profile
